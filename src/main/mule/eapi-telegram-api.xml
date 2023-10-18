@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+	<http:request-config name="HTTPS_Telegram_Config" doc:name="HTTP Request configuration" doc:id="0ff96dc2-3c33-47bf-b5b4-75094d05c121" >
+		<http:request-connection host="api.telegram.org" port="443" protocol="HTTPS"/>
+	</http:request-config>
+	<http:request-config name="HTTPS_Azure_Config" doc:name="HTTP Request configuration" doc:id="23a803dd-4454-4e46-b5e3-a9a9f77de30f" >
+		<http:request-connection protocol="HTTPS" host="yourAzureBaseURL.blob.core.windows.net" port="443" />
+	</http:request-config>
+	<flow name="eapi-telegram-upload-file-flow" doc:id="a2e5e83d-9075-43c2-a0c5-acbd148d06f1" initialState="stopped">
+		<scheduler doc:name="Scheduler" doc:id="5aaf4084-9ebd-4fee-8aa5-cb7e2edbce40" >
+			<scheduling-strategy >
+				<fixed-frequency timeUnit="HOURS"/>
+			</scheduling-strategy>
+		</scheduler>
+		<http:request method="GET" doc:name="Request to get updates" doc:id="62d9a67f-0e8d-4538-9090-2cf0dab62a3f" config-ref="HTTPS_Telegram_Config" path="/botYOUR_BOT_TOKEN/getUpdates"/>
+		<ee:transform doc:name="get file_id from latest update" doc:id="c82b5ed5-9333-4b04-8db3-9a6858f178e7" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="file_id" ><![CDATA[%dw 2.0
+output application/java
+---
+payload.result[-1].message.document.file_id]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<http:request method="GET" doc:name="Request to get file path" doc:id="0014badc-5423-4f10-81df-313b124c8f32" config-ref="HTTPS_Telegram_Config" path='#["/botYOUR_BOT_TOKEN/getFile?file_id=" ++ vars.file_id as String]' />
+		<ee:transform doc:name="get file path from answer" doc:id="17f2ebbc-8f49-4bf0-b741-6f8997565419" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="file_path" ><![CDATA[%dw 2.0
+output application/java
+---
+payload.result.file_path]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<http:request method="GET" doc:name="Request to get file content" doc:id="61c66bdd-609d-4942-851e-8114c5514529" config-ref="HTTPS_Telegram_Config" path='#["/file/botYOUR_BOT_TOKEN/" ++ vars.file_path as String]' />
+		<ee:transform doc:name="Set file content as variable" doc:id="ec23eec6-64ff-47a8-84bd-70d4aeb0fe7d" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="file_content" ><![CDATA[%dw 2.0
+output application/java
+---
+payload]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<http:request method="PUT" doc:name="Request" doc:id="6c66b1c2-05c0-4548-92b2-999d3d2760cb" config-ref="HTTPS_Azure_Config" path='#["your-container-name/" ++ ((vars.file_path splitBy "/")[1] as String) ++ "?YOUR_AZURE_SAS_TOKEN"]'>
+			<http:body ><![CDATA[#[vars.file_content]]]></http:body>
+			<http:headers ><![CDATA[#[output application/java
+---
+{
+	"Content-type" : "application/pdf",
+	"x-ms-blob-type" : "BlockBlob"
+}]]]></http:headers>
+		</http:request>
+	</flow>
+	<flow name="eapi-telegram-getFile" doc:id="6bbeb740-a9e7-436e-b609-a16edafee073" initialState="started" >
+		<scheduler doc:name="Scheduler" doc:id="d83778b0-be75-4101-846e-11e8fcad3ba6" >
+			<scheduling-strategy >
+				<fixed-frequency timeUnit="HOURS" />
+			</scheduling-strategy>
+		</scheduler>
+		<http:request method="GET" doc:name="Request to get updates" doc:id="e735aecc-b523-4470-8818-468771d5b04c" config-ref="HTTPS_Telegram_Config" path="/botYOUR_BOT_TOKEN/getUpdates" />
+		<ee:transform doc:name="get text message and split it" doc:id="6bc384ad-8f3a-4438-ad60-7b09f6808aaf" >
+			<ee:message />
+			<ee:variables >
+				<ee:set-variable variableName="message_content" ><![CDATA[%dw 2.0
+output application/java
+---
+payload.result[-1].message.text splitBy " "]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<ee:transform doc:name="Bring username and chat_id" doc:id="e8043594-3988-430f-b819-9f263a9aad86" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="user_details" ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	"chat_id":payload.result[-1].message."from".id,
+	"username":payload.result[-1].message."from".username,
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<choice doc:name="Check if properly formatted" doc:id="58edb381-1572-43c9-ad76-db4739b5ddac" >
+			<when expression='#[(sizeOf(vars.message_content) == 2) and (vars.message_content[0]=="/getFile")]'>
+				<logger level="INFO" doc:name="checking if the file exists" doc:id="5b6bd848-3918-49d2-88cc-718886413979" />
+				<http:request method="HEAD" doc:name="Request to check if the file exists on azure" doc:id="744eb715-9acf-4566-8692-32a7be51e767" config-ref="HTTPS_Azure_Config" url='#["https://yourAzureBaseURL.blob.core.windows.net/your-container-name/" ++ vars.message_content[1] ++ "?YOUR_AZURE_SAS_TOKEN"]'>
+					<http:response-validator >
+						<http:success-status-code-validator values="200..404" />
+					</http:response-validator>
+				</http:request>
+				<choice doc:name="Check if the file exists" doc:id="038d430b-4ecf-4d20-9114-f3ef0cb0b73c" >
+					<when expression="#[attributes.statusCode == 404]">
+						<http:request method="POST" doc:name="Request to communicate the non-existing file" doc:id="9b3315f3-a3ed-4416-8608-5ecba399bc94" config-ref="HTTPS_Telegram_Config" path="/botYOUR_BOT_TOKEN/sendMessage" >
+							<http:body ><![CDATA[#[{
+ 	"chat_id": vars.user_details.chat_id,
+ 	"text": "Hello " ++ vars.user_details.username ++ " seems to not exists on your Azure Blob Storage. Please verifiy the file name. "
+ 	 	}]]]></http:body>
+						</http:request>
+					</when>
+					<otherwise >
+						<http:request method="POST" doc:name="Request to communicate the incoming file" doc:id="9a6f0ed7-f612-4809-8786-120305fb5256" config-ref="HTTPS_Telegram_Config" path="/botYOUR_BOT_TOKEN/sendMessage" >
+							<http:body ><![CDATA[#[output application/json
+---
+{
+ 	"chat_id": vars.user_details.chat_id,
+ 	"text": "Hello " ++ vars.user_details.username ++ " the file name " ++ vars.message_content[1] ++ " is coming!"
+ 	}]]]></http:body>
+						</http:request>
+						<http:request method="POST" doc:name="Request to send the file" doc:id="e3555614-403a-40bf-9b88-74d868ee362d" config-ref="HTTPS_Telegram_Config" path="/botYOUR_BOT_TOKEN/sendDocument" >
+							<http:body ><![CDATA[#[output application/json
+---
+
+{
+ 	"chat_id": vars.user_details.chat_id,
+ 	"document": "https://yourAzureBaseURL.blob.core.windows.net/your-container-name/" ++ vars.message_content[1] ++ "YOUR_AZURE_SAS_TOKEN"
+ 	}]]]></http:body>
+						</http:request>
+					</otherwise>
+				</choice>
+			</when>
+			<otherwise >
+				<http:request method="POST" doc:name="Request to send message" doc:id="50c15d3e-bb33-4a27-9fe0-4b31eb07356a" config-ref="HTTPS_Telegram_Config" path="/botYOUR_BOT_TOKEN/sendMessage" >
+					<http:body ><![CDATA[#[{
+ 	"chat_id": vars.user_details.chat_id,
+ 	"text": "Hello " ++ vars.user_details.username ++ " to download a file, please use the format '/getFile <yourfilename>'. "
+ 	 	}]]]></http:body>
+				</http:request>
+			</otherwise>
+		</choice>
+	</flow>
+	
+	
+	<flow name="eapi-telegram-notification-send-event" doc:id="a281d124-4ed8-412c-a9cf-948bb6eadd00" initialState="stopped" >
+		<scheduler doc:name="Scheduler" doc:id="9b2d07d3-ec75-4975-bcbc-bb9a38e2bd3b" >
+			<scheduling-strategy >
+				<fixed-frequency timeUnit="MINUTES" frequency="2"/>
+			</scheduling-strategy>
+		</scheduler>
+		<ee:transform doc:name="set chat_id and user" doc:id="3078c054-c863-4ae0-a72a-c395fee16fd3" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="userdetails" ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	"chat_id":"YOUR_CHAT_ID",
+	"username": "YOUR_USERNAME"
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<http:request method="POST" doc:name="Request to send message" doc:id="1c91ae37-4c03-44b6-8540-1316952c085c" config-ref="HTTPS_Telegram_Config" path="/botYOUR_BOT_TOKEN/sendMessage" >
+			<http:body ><![CDATA[#[{
+ 	"chat_id": vars.userdetails.chat_id,
+ 	"text": "Hello " ++ vars.userdetails.username ++ " something is happening on your Mulesoft application: check them out!"
+ 	 	}]]]></http:body>
+		</http:request>
+	</flow>
+</mule>
